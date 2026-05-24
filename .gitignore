@@ -31,7 +31,12 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
+.env.local
 .env*.local
+# `.env.example` is the template — keep it tracked so new clones
+# see what env vars are expected.
+!.env.example
 
 # typescript
 *.tsbuildinfo
