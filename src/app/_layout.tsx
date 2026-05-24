@@ -51,6 +51,10 @@ function AuthGate() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(auth)/login" options={{ animation: 'fade' }} />
       <Stack.Screen name="index" />
+      <Stack.Screen
+        name="projects"
+        options={{ presentation: 'modal', animation: 'slide_from_bottom' }}
+      />
     </Stack>
   );
 }

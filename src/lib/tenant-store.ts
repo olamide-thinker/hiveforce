@@ -15,6 +15,7 @@
  * if it ever needs to re-render on tenant changes (the project
  * picker in Phase 1c will use this).
  */
+import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export interface Tenant {
@@ -85,6 +86,17 @@ export function subscribe(listener: (t: Tenant) => void): () => void {
   return () => {
     listeners.delete(listener);
   };
+}
+
+/**
+ * React hook to subscribe to tenant changes. Returns the current
+ * tenant on every render and re-renders the consumer when any
+ * field changes. Pairs cleanly with the project picker UX.
+ */
+export function useTenant(): Tenant {
+  const [snapshot, setSnapshot] = useState<Tenant>(() => current);
+  useEffect(() => subscribe(setSnapshot), []);
+  return snapshot;
 }
 
 /** Clear everything. Called on sign-out. */
