@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { SyncProvider } from '@/lib/sync-context';
 
 function AuthGate() {
   const { user, initializing } = useAuth();
@@ -55,9 +56,14 @@ function AuthGate() {
 }
 
 export default function RootLayout() {
+  // SyncProvider lives INSIDE AuthProvider so it can read user state,
+  // and OUTSIDE AuthGate so its lifecycle isn't tied to the route
+  // tree (sync should keep running while the user navigates).
   return (
     <AuthProvider>
-      <AuthGate />
+      <SyncProvider>
+        <AuthGate />
+      </SyncProvider>
     </AuthProvider>
   );
 }
