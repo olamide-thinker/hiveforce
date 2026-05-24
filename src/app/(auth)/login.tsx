@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -24,6 +25,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 
 import { auth } from '@/lib/firebase';
@@ -31,6 +33,7 @@ import { auth } from '@/lib/firebase';
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,19 +89,43 @@ export default function LoginScreen() {
               onChangeText={setEmail}
               editable={!submitting}
             />
-            <TextInput
-              style={styles.input}
-              placeholder="password"
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete="current-password"
-              secureTextEntry
-              textContentType="password"
-              value={password}
-              onChangeText={setPassword}
-              editable={!submitting}
-              onSubmitEditing={onSubmit}
-            />
+            {/* Password field with show/hide eye toggle. We render
+                the TextInput and the toggle as siblings inside a
+                bordered View so the visual treatment matches the
+                email input above. Using Pressable rather than
+                TouchableOpacity for the toggle gives us a quieter
+                press feedback (no opacity fade), which feels right
+                for a small in-input control. */}
+            <View style={styles.passwordWrap}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="password"
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="current-password"
+                secureTextEntry={!showPassword}
+                textContentType="password"
+                value={password}
+                onChangeText={setPassword}
+                editable={!submitting}
+                onSubmitEditing={onSubmit}
+              />
+              <Pressable
+                onPress={() => setShowPassword((v) => !v)}
+                hitSlop={8}
+                style={styles.eyeButton}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  showPassword ? 'Hide password' : 'Show password'
+                }
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off-outline' : 'eye-outline'}
+                  size={22}
+                  color="#6b7280"
+                />
+              </Pressable>
+            </View>
           </View>
 
           {error && <Text style={styles.error}>{error}</Text>}
@@ -151,6 +178,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     fontSize: 16,
+  },
+  // Password wrap matches the input's border + radius so the
+  // child TextInput sits flush. paddingRight reserves space for
+  // the eye button so the user's password text doesn't slide
+  // under it.
+  passwordWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    paddingRight: 4,
+  },
+  passwordInput: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 16,
+  },
+  eyeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    justifyContent: 'center',
   },
   button: {
     backgroundColor: '#1a73e8',
