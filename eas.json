@@ -1,0 +1,45 @@
+{
+  "//": "EAS Build configuration. Three profiles:",
+  "//   development: dev-client APK that supports JS reload + dev tools.",
+  "//   preview:     internal-distribution APK for QA on real phones.",
+  "//                Cleartext HTTP allowed (talks to dev backends).",
+  "//   production:  Play Store / direct-share signed APK.",
+  "//                All env vars baked at build time via EAS Secrets.",
+  "//",
+  "// Run:",
+  "//   eas build --profile preview --platform android",
+  "// Output is a downloadable APK link in the build dashboard.",
+
+  "cli": {
+    "version": ">= 7.6.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "development",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

@@ -1,16 +1,24 @@
 {
   "expo": {
-    "name": "shan-field-app",
-    "slug": "shan-field-app",
+    "name": "Hiveforce",
+    "slug": "hiveforce",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "shanfieldapp",
+    "scheme": "hiveforce",
     "userInterfaceStyle": "automatic",
+    "runtimeVersion": { "policy": "appVersion" },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.syncsalez.hiveforce",
+      "supportsTablet": true
     },
     "android": {
+      "package": "com.syncsalez.hiveforce",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
