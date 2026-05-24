@@ -32,6 +32,7 @@ yarn-error.*
 
 # local env files
 .env
+.env.bak
 .env.local
 .env*.local
 # `.env.example` is the template — keep it tracked so new clones
