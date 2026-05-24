@@ -42,6 +42,7 @@ import { auth } from './firebase';
 import { db } from '@/db';
 import { schema } from '@/db/schema';
 import { getTenantContext } from './tenant-store';
+import { mqttRealtimeService } from './mqtt-service';
 
 // ─── Logger ────────────────────────────────────────────────────────
 // sync-rn calls logger.info / .warn / .error / .debug. We funnel all
@@ -77,18 +78,10 @@ const stubMediaService = {
   utils: {},
 };
 
-// ─── Stub MQTT service ─────────────────────────────────────────────
-// Phase 1b.4 replaces this with a real mqtt.js client subscribed to
-// `proj/{projectId}/+`. Today's stub satisfies sync-rn's interface
-// surface so initSyncCore doesn't throw on `getMqttService()`.
-const stubMqttService = {
-  isConnected: () => false,
-  subscribe: () => {},
-  unsubscribe: () => {},
-  publish: () => {},
-  on: () => {},
-  off: () => {},
-};
+// MQTT realtime service lives in ./mqtt-service.ts. Real connection
+// to HiveMQ Cloud over wss://, subscribed to proj/{projectId}/+
+// once the active project is known. Falls back to silent no-op when
+// EXPO_PUBLIC_MQTT_WS_URL is unset (pull-cursor sync still works).
 
 // ─── Tracking ──────────────────────────────────────────────────────
 // sync-rn pushes audit events ("entity X created", "push failed",
@@ -130,7 +123,7 @@ export function installBridgeConfig(): BridgeConfiguration {
     // Firebase will rotate the ID token if it's stale.
     getRefreshToken: async () => null,
 
-    getMqttService: () => stubMqttService,
+    getMqttService: () => mqttRealtimeService,
     getCriticalEntities: () => [],
     logger,
     getTracking: () => tracking,

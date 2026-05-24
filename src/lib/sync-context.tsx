@@ -35,6 +35,7 @@ import {
 
 import {
   initSyncCore,
+  initSyncRealtime,
   resetSyncInitialized,
   startPeriodicSync,
   stopPeriodicSync,
@@ -48,6 +49,7 @@ import {
   setOrganization,
   restoreActiveProject,
   clearTenant,
+  getTenantContext,
 } from './tenant-store';
 import { runMigrations, clearAllData } from '@/db';
 
@@ -151,7 +153,13 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         //    on resume).
         await initSyncCore(user.uid);
 
-        // 7. Start the background pull/push loop.
+        // 7. Realtime subscription. Tenant has the projectId (=
+        //    branchId) at this point — if it's null, mqtt-service
+        //    no-ops and only the pull-cursor path runs. Fire and
+        //    forget; sync-rn handles reconnects internally.
+        void initSyncRealtime({ tenant: getTenantContext() });
+
+        // 8. Start the background pull/push loop.
         startPeriodicSync();
 
         setState({ status: 'ready', projectId });
