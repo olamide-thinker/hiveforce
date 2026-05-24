@@ -94,59 +94,82 @@ const tracking = {
 };
 
 /**
- * Build + install the bridge configuration. Called once after
- * sign-in (so we know who the user is and what their tenant is)
- * but before initSyncCore.
+ * The bridge config object itself. Reads everything lazily via
+ * getters so it's safe to build at module load — when the getters
+ * are called (later, from sync-rn's internals) they pick up the
+ * current state of auth, tenant, etc.
  *
- * Returns the same config object for tests / debugging.
+ * IMPORTANT: this is registered at module load via the side-effect
+ * setBridgeConfig() call below. sync-rn's InstantSyncManager and
+ * MediaDeletionManager subscribe to NetInfo at import time, and
+ * NetInfo fires an initial state-fetch on the very next microtask
+ * — which would call getBridgeConfig() and throw if we waited for
+ * SyncProvider's useEffect to install the config. Installing
+ * synchronously at module-load closes the race.
+ */
+const bridgeConfig: BridgeConfiguration = {
+  getDb: () => db,
+  getSchema: () => schema,
+  getApiClient: () => apiClient,
+  getTenantContext: () => getTenantContext(),
+
+  getAuthToken: async () => {
+    // forceRefresh:false — Firebase's getIdToken auto-refreshes
+    // when the cached token has < 5min left, which is exactly the
+    // semantics sync-rn wants. Returns null pre-login; sync-rn
+    // gracefully skips the network call when token is null.
+    const user = auth.currentUser;
+    if (!user) return null;
+    return user.getIdToken();
+  },
+
+  // Firebase's JS SDK doesn't expose a stable refresh token via
+  // `auth.currentUser.refreshToken` reliably (it's an internal
+  // detail of the SDK's token-cache). Returning null is safe —
+  // sync-rn's retry path will just call getAuthToken() again, and
+  // Firebase will rotate the ID token if it's stale.
+  getRefreshToken: async () => null,
+
+  getMqttService: () => mqttRealtimeService,
+  getCriticalEntities: () => [],
+  logger,
+  getTracking: () => tracking,
+  getMediaService: () => stubMediaService,
+  getBaseUrl: () =>
+    process.env.EXPO_PUBLIC_API_BASE || 'http://localhost:1234',
+
+  // Firebase persists its own token state via AsyncStorage (set
+  // up in src/lib/firebase.ts). We don't need to do anything when
+  // sync-rn tells us about a refresh — Firebase already did it.
+  storeTokens: async () => {},
+
+  notifyAuthFailure: (error: unknown) => {
+    logger.warn('Auth failure reported by sync-rn — signing out', error);
+    void signOut(auth);
+  },
+
+  // Keep 14 days of synced action records so the "what did I do
+  // last week?" debug surface has useful history without bloating
+  // the local DB indefinitely.
+  actionRetentionDays: 14,
+};
+
+// ─── Module-load side effect: install immediately ──────────────────
+// This MUST run before sync-rn's internal NetInfo listeners get a
+// chance to call getBridgeConfig(). Since all imports above resolve
+// synchronously and setBridgeConfig is a sync setter, executing this
+// at the top level guarantees that by the time NetInfo's first
+// async tick fires, the config is in place.
+setBridgeConfig(bridgeConfig);
+
+/**
+ * Backward-compatible explicit installer. Called from SyncProvider
+ * after the user signs in — currently a no-op (the config is already
+ * installed via the module-load side effect above) but kept as a
+ * named export so future versions can re-install with user-specific
+ * state without callers needing to know it's idempotent.
  */
 export function installBridgeConfig(): BridgeConfiguration {
-  const config: BridgeConfiguration = {
-    getDb: () => db,
-    getSchema: () => schema,
-    getApiClient: () => apiClient,
-    getTenantContext: () => getTenantContext(),
-
-    getAuthToken: async () => {
-      // forceRefresh:false — Firebase's getIdToken auto-refreshes
-      // when the cached token has < 5min left, which is exactly the
-      // semantics sync-rn wants.
-      const user = auth.currentUser;
-      if (!user) return null;
-      return user.getIdToken();
-    },
-
-    // Firebase's JS SDK doesn't expose a stable refresh token via
-    // `auth.currentUser.refreshToken` reliably (it's an internal
-    // detail of the SDK's token-cache). Returning null is safe —
-    // sync-rn's retry path will just call getAuthToken() again, and
-    // Firebase will rotate the ID token if it's stale.
-    getRefreshToken: async () => null,
-
-    getMqttService: () => mqttRealtimeService,
-    getCriticalEntities: () => [],
-    logger,
-    getTracking: () => tracking,
-    getMediaService: () => stubMediaService,
-    getBaseUrl: () =>
-      process.env.EXPO_PUBLIC_API_BASE || 'http://localhost:1234',
-
-    // Firebase persists its own token state via AsyncStorage (set
-    // up in src/lib/firebase.ts). We don't need to do anything when
-    // sync-rn tells us about a refresh — Firebase already did it.
-    storeTokens: async () => {},
-
-    notifyAuthFailure: (error: unknown) => {
-      logger.warn('Auth failure reported by sync-rn — signing out', error);
-      void signOut(auth);
-    },
-
-    // Keep 14 days of synced action records so the "what did I do
-    // last week?" debug surface has useful history without bloating
-    // the local DB indefinitely.
-    actionRetentionDays: 14,
-  };
-
-  setBridgeConfig(config);
-  return config;
+  setBridgeConfig(bridgeConfig);
+  return bridgeConfig;
 }

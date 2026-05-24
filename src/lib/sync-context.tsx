@@ -33,6 +33,15 @@ import {
   type ReactNode,
 } from 'react';
 
+// Import sync-bridge FIRST so its module-load setBridgeConfig() runs
+// before any sync-rn internal module subscribes to NetInfo. sync-rn's
+// InstantSyncManager + MediaDeletionManager fire an initial state
+// fetch on the next microtask; if the config isn't installed by then,
+// they log "Bridge configuration not initialized" errors. The bridge
+// import chain transitively loads sync-rn anyway, so this ordering
+// doesn't add latency — it just closes the timing window.
+import { installBridgeConfig } from './sync-bridge';
+
 import {
   initSyncCore,
   initSyncRealtime,
@@ -43,7 +52,6 @@ import {
 
 import { useAuth } from './auth-context';
 import { apiGet } from './api';
-import { installBridgeConfig } from './sync-bridge';
 import {
   setUser,
   setOrganization,

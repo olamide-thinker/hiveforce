@@ -49,7 +49,10 @@ function AuthGate() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(auth)/login" options={{ animation: 'fade' }} />
+      {/* Route group names match the directory name in parens, not
+          the file path. So `(auth)` covers everything under
+          (auth)/*, including login.tsx. */}
+      <Stack.Screen name="(auth)" options={{ animation: 'fade' }} />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="task/[id]" />
       <Stack.Screen
