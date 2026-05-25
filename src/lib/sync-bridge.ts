@@ -36,6 +36,10 @@ import {
   setBridgeConfig,
   apiClient,
   syncConfigProvider,
+  setFrontendSyncMode,
+  stopPeriodicSync,
+  setSyncMode,
+  disableRealtimeSync,
   type BridgeConfiguration,
 } from '@syncsalez-dev/sync-rn';
 
@@ -185,6 +189,38 @@ syncConfigProvider.getEnabledEntities = () => [];
 syncConfigProvider.getEntitiesByPriority = () => [];
 syncConfigProvider.getAllEntityConfigs = () => ({});
 syncConfigProvider.getEntityConfig = () => undefined;
+
+// Belt-and-braces shutdown of sync-core's auto-loop. Emptying the
+// config provider above stops new entity work, but the Periodic
+// SyncManager + InstantSyncManager start themselves on module
+// import via NetInfo subscriptions and will keep firing "Syncing
+// single entity <thing>" calls against the cached entity list
+// they captured at orchestrator construction.
+//
+// Three switches:
+//   - setFrontendSyncMode('disabled') — sync-rn's top-level kill
+//     switch. Stops all sync paths from initiating new work.
+//   - setSyncMode('disabled')         — older adapter form of the
+//                                       same. Belt + braces.
+//   - disableRealtimeSync()           — sync-rn's own realtime
+//                                       (separate from our MQTT
+//                                       bridge). We do our own
+//                                       realtime via mqtt-service.
+//   - stopPeriodicSync()              — kill the background timer.
+//
+// All four are safe to call before any sync-core init — they just
+// flip flags / clear intervals that are checked by sync-core's
+// internals.
+try {
+  setFrontendSyncMode('disabled');
+  setSyncMode('disabled');
+  disableRealtimeSync();
+  stopPeriodicSync();
+} catch (err) {
+  // Never let a sync-rn internal throw break boot. Worst case,
+  // the entity errors keep noisy-logging until the next start.
+  console.warn('[sync-bridge] failed to halt sync-core auto-loop:', err);
+}
 
 /**
  * Backward-compatible explicit installer. Called from SyncProvider
