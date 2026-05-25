@@ -137,6 +137,7 @@ export async function runMigrations(): Promise<void> {
       title TEXT,
       body TEXT,
       kind TEXT DEFAULT 'note',
+      severity TEXT,
       author_id TEXT,
       voice_url TEXT,
       transcription TEXT,
@@ -148,6 +149,7 @@ export async function runMigrations(): Promise<void> {
       updated_at TEXT,
       sync_status TEXT DEFAULT 'synced'
     )`,
+    `ALTER TABLE field_reports ADD COLUMN severity TEXT`,
     `CREATE TABLE IF NOT EXISTS daily_logs (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,

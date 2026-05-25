@@ -67,6 +67,7 @@ interface ReportRow {
   title: string | null;
   body: string | null;
   kind: string | null;
+  severity: string | null;
   createdAt: string | null;
 }
 
@@ -146,6 +147,7 @@ export default function TaskDetailScreen() {
         title: fieldReports.title,
         body: fieldReports.body,
         kind: fieldReports.kind,
+        severity: fieldReports.severity,
         createdAt: fieldReports.createdAt,
       })
       .from(fieldReports)
@@ -463,15 +465,48 @@ function ReportRowView({ report }: { report: ReportRow }) {
   const date = report.createdAt
     ? new Date(report.createdAt).toLocaleString()
     : '';
+  // Severity badge for incidents (matches the compose picker
+  // colors so the supervisor's mental model stays consistent
+  // across screens).
+  const severityTheme = (() => {
+    if (report.kind !== 'incident') return null;
+    switch (report.severity) {
+      case 'critical':
+        return { color: '#991b1b', bg: '#fee2e2', label: 'CRITICAL' };
+      case 'high':
+        return { color: '#c2410c', bg: '#ffedd5', label: 'HIGH' };
+      case 'medium':
+        return { color: '#a16207', bg: '#fef3c7', label: 'MED' };
+      case 'low':
+        return { color: '#15803d', bg: '#dcfce7', label: 'LOW' };
+      default:
+        return null;
+    }
+  })();
   return (
     <View style={styles.reportRow}>
       <View style={[styles.reportIcon, { backgroundColor: `${color}15` }]}>
         <Ionicons name={icon as any} size={16} color={color} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.reportTitle} numberOfLines={1}>
-          {report.title ?? report.kind ?? 'Note'}
-        </Text>
+        <View style={styles.reportTitleLine}>
+          <Text style={styles.reportTitle} numberOfLines={1}>
+            {report.title ?? report.kind ?? 'Note'}
+          </Text>
+          {severityTheme && (
+            <Text
+              style={[
+                styles.reportSeverityBadge,
+                {
+                  backgroundColor: severityTheme.bg,
+                  color: severityTheme.color,
+                },
+              ]}
+            >
+              {severityTheme.label}
+            </Text>
+          )}
+        </View>
         {report.body ? (
           <Text style={styles.reportBody} numberOfLines={2}>
             {report.body}
@@ -873,7 +908,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  reportTitle: { fontSize: 14, fontWeight: '500', color: '#111827' },
+  reportTitle: { flex: 1, fontSize: 14, fontWeight: '500', color: '#111827' },
+  reportTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  reportSeverityBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
   reportBody: { fontSize: 12, color: '#6b7280', marginTop: 2 },
   reportDate: { fontSize: 11, color: '#9ca3af', marginTop: 3 },
   itemRow: {

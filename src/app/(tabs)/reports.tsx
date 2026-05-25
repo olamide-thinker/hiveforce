@@ -40,6 +40,7 @@ type FeedItem =
       title: string | null;
       body: string | null;
       reportKind: string | null;
+      severity: string | null;
       createdAt: string | null;
     }
   | {
@@ -73,6 +74,7 @@ export default function ReportsScreen() {
           title: fieldReports.title,
           body: fieldReports.body,
           kind: fieldReports.kind,
+          severity: fieldReports.severity,
           createdAt: fieldReports.createdAt,
         })
         .from(fieldReports)
@@ -99,6 +101,7 @@ export default function ReportsScreen() {
           title: r.title,
           body: r.body,
           reportKind: r.kind,
+          severity: r.severity,
           createdAt: r.createdAt,
         }),
       ),
@@ -212,16 +215,47 @@ function FeedRow({ item }: { item: FeedItem }) {
         ? '#1d4ed8'
         : '#6b7280';
 
+  // Severity badge only renders for incidents. Color matches the
+  // compose picker so the worker → supervisor visual language is
+  // consistent.
+  const severityTheme = (() => {
+    if (item.kind !== 'report' || item.reportKind !== 'incident') return null;
+    switch (item.severity) {
+      case 'critical':
+        return { color: '#991b1b', bg: '#fee2e2', label: 'CRITICAL' };
+      case 'high':
+        return { color: '#c2410c', bg: '#ffedd5', label: 'HIGH' };
+      case 'medium':
+        return { color: '#a16207', bg: '#fef3c7', label: 'MED' };
+      case 'low':
+        return { color: '#15803d', bg: '#dcfce7', label: 'LOW' };
+      default:
+        return null;
+    }
+  })();
+
   return (
     <View style={styles.row}>
       <View style={[styles.rowIcon, { backgroundColor: `${color}15` }]}>
         <Ionicons name={icon as any} size={18} color={color} />
       </View>
       <View style={{ flex: 1, gap: 2 }}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {item.title ??
-            (item.kind === 'report' ? item.reportKind ?? 'Note' : 'Daily log')}
-        </Text>
+        <View style={styles.rowTitleLine}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {item.title ??
+              (item.kind === 'report' ? item.reportKind ?? 'Note' : 'Daily log')}
+          </Text>
+          {severityTheme && (
+            <Text
+              style={[
+                styles.severityBadge,
+                { backgroundColor: severityTheme.bg, color: severityTheme.color },
+              ]}
+            >
+              {severityTheme.label}
+            </Text>
+          )}
+        </View>
         {item.body ? (
           <Text style={styles.rowBody} numberOfLines={2}>
             {item.body}
@@ -259,7 +293,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  rowTitle: { fontSize: 15, fontWeight: '500', color: '#111827' },
+  rowTitle: { flex: 1, fontSize: 15, fontWeight: '500', color: '#111827' },
+  rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  severityBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
   rowBody: { fontSize: 13, color: '#6b7280' },
   empty: { paddingVertical: 60, alignItems: 'center', gap: 6 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: '#374151' },

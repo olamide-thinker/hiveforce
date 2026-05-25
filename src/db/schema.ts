@@ -139,6 +139,10 @@ export const fieldReports = sqliteTable('field_reports', {
   title: text('title'),
   body: text('body'),
   kind: text('kind').default('note'),
+  // Triage level for kind='incident' — low / medium / high /
+  // critical. Drives the colored badge in feed rows so a
+  // supervisor's "urgent inbox" view can sort by urgency.
+  severity: text('severity'),
   authorId: text('author_id'),
   voiceUrl: text('voice_url'),
   transcription: text('transcription'),

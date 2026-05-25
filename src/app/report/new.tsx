@@ -95,6 +95,18 @@ interface MaterialReqItem {
 const STATUS_OPTIONS = ['pending', 'progress', 'done', 'cancelled'] as const;
 type RequestedStatus = (typeof STATUS_OPTIONS)[number];
 
+// Severity scale for incident reports. Order is meaningful — left
+// to right is least → most urgent. Mirrors backend's ALLOWED_
+// SEVERITY whitelist exactly so a chip tap always succeeds at the
+// server.
+const SEVERITY_OPTIONS = [
+  { value: 'low', label: 'Low', color: '#15803d', bg: '#dcfce7' },
+  { value: 'medium', label: 'Medium', color: '#a16207', bg: '#fef3c7' },
+  { value: 'high', label: 'High', color: '#c2410c', bg: '#ffedd5' },
+  { value: 'critical', label: 'Critical', color: '#991b1b', bg: '#fee2e2' },
+] as const;
+type Severity = (typeof SEVERITY_OPTIONS)[number]['value'];
+
 export default function NewReportScreen() {
   const tenant = useTenant();
   // Optional route params:
@@ -125,6 +137,11 @@ export default function NewReportScreen() {
   // confirmation_request: which task to ask about + what status
   const [confirmStatus, setConfirmStatus] =
     useState<RequestedStatus>('done');
+  // incident severity. Default medium — workers tend to either
+  // know it's an emergency (and bump to critical) or it's
+  // routine, so medium is the safest middle for an unselected
+  // state. Required for incident kind, ignored otherwise.
+  const [severity, setSeverity] = useState<Severity>('medium');
 
   // Seed the items list from the task's materials JSON when arriving
   // via the "Request" button on task detail. We pull from local
@@ -382,6 +399,10 @@ export default function NewReportScreen() {
           // up in that task's Reports section after sync. Otherwise
           // the report stays project-scoped.
           taskId: taskId || undefined,
+          // Severity is only meaningful for incidents — the
+          // backend silently drops it on other kinds, but we don't
+          // even send it to keep the payload tidy.
+          severity: kind === 'incident' ? severity : undefined,
           request,
           attachments:
             attachmentRecords.length > 0 ? attachmentRecords : undefined,
@@ -571,6 +592,53 @@ export default function NewReportScreen() {
                 <Ionicons name="add-circle-outline" size={18} color="#1a73e8" />
                 <Text style={styles.itemAddText}>Add item</Text>
               </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ─── Incident severity ─── */}
+          {/* Four-level scale: low → medium → high → critical.
+              Each chip is color-coded so the visual gradient
+              reinforces urgency. The supervisor's dashboard can
+              filter on severity, so a typo'd "kritical" would
+              silently land in the wrong inbox — we let users tap
+              only validated values, not freeform. */}
+          {kind === 'incident' && (
+            <View style={{ gap: 8 }}>
+              <Text style={styles.sectionLabel}>How urgent?</Text>
+              <View style={styles.statusRow}>
+                {SEVERITY_OPTIONS.map((s) => {
+                  const active = s.value === severity;
+                  return (
+                    <TouchableOpacity
+                      key={s.value}
+                      onPress={() => setSeverity(s.value)}
+                      style={[
+                        styles.severityChip,
+                        { borderColor: s.color },
+                        active && {
+                          backgroundColor: s.color,
+                          borderColor: s.color,
+                        },
+                      ]}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.severityChipText,
+                          { color: active ? '#fff' : s.color },
+                        ]}
+                      >
+                        {s.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={styles.severityHelper}>
+                Critical = site-stop / page someone now.{'\n'}
+                High = needs eyes within the hour.{'\n'}
+                Medium = today.{'  '}Low = FYI.
+              </Text>
             </View>
           )}
 
@@ -850,6 +918,23 @@ const styles = StyleSheet.create({
     color: '#374151',
     fontWeight: '500',
     textTransform: 'uppercase',
+  },
+  // Severity uses border-color tinting at rest (so the gradient
+  // from green → red is visible without taps) and fills with the
+  // color when active. Pinkish text for low, deep red for crit.
+  severityChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    backgroundColor: '#fff',
+  },
+  severityChipText: { fontSize: 13, fontWeight: '700', textTransform: 'uppercase' },
+  severityHelper: {
+    fontSize: 11,
+    color: '#6b7280',
+    lineHeight: 16,
+    marginTop: 2,
   },
   attachRow: { flexDirection: 'row', gap: 8 },
   attachBtn: {

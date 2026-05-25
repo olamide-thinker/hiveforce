@@ -172,8 +172,9 @@ async function upsertRow(table: string, row: Record<string, any>): Promise<void>
     ],
     field_reports: [
       'id', 'report_code', 'project_id', 'business_id', 'task_id', 'title',
-      'body', 'kind', 'author_id', 'voice_url', 'transcription', 'attachments',
-      'request', 'resolution', 'metadata', 'created_at', 'updated_at',
+      'body', 'kind', 'severity', 'author_id', 'voice_url', 'transcription',
+      'attachments', 'request', 'resolution', 'metadata', 'created_at',
+      'updated_at',
     ],
     daily_logs: [
       'id', 'project_id', 'business_id', 'log_date', 'author_id', 'weather',
