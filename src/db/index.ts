@@ -222,16 +222,37 @@ export async function runMigrations(): Promise<void> {
       await db.run(sql.raw(stmt));
     } catch (err: any) {
       // SQLite's ALTER TABLE ADD COLUMN throws "duplicate column"
-      // on re-runs. We tolerate that here because the migration
-      // runner is invoked on every cold boot (it's idempotent by
-      // intent); a column that already exists is success, not
-      // failure. CREATE TABLE IF NOT EXISTS and CREATE INDEX IF
-      // NOT EXISTS already self-tolerate.
-      const msg = String(err?.message ?? err).toLowerCase();
+      // on re-runs. We tolerate that — a column that already
+      // exists is success, not failure. The check has to look in
+      // BOTH err.message and err.cause.message because drizzle
+      // wraps the native SQLite error in a DrizzleError whose
+      // outer message is just "Failed to run the query <stmt>",
+      // hiding the actual reason in `.cause`.
+      const errMsg = String(err?.message ?? '').toLowerCase();
+      const causeMsg = String(err?.cause?.message ?? '').toLowerCase();
+      const combined = `${errMsg} ${causeMsg}`;
       if (
-        msg.includes('duplicate column') ||
-        msg.includes('already exists')
+        combined.includes('duplicate column') ||
+        combined.includes('already exists') ||
+        // expo-sqlite phrasing — older versions say "duplicate
+        // column name: X" instead of "duplicate column".
+        combined.includes('duplicate column name')
       ) {
+        continue;
+      }
+      // ALTER TABLE ADD COLUMN failures specifically — log and
+      // keep going. The column might already be there via a
+      // different migration path, or we're in a state we can
+      // recover from. Better to boot with a partial schema and
+      // let sync repopulate than to brick the app on cold start.
+      if (stmt.trim().toUpperCase().startsWith('ALTER TABLE')) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[migrate] ALTER skipped:',
+          stmt.split('\n')[0],
+          '—',
+          errMsg || causeMsg,
+        );
         continue;
       }
       throw err;
