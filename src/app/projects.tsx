@@ -67,7 +67,10 @@ export default function ProjectsScreen() {
   }, [load]);
 
   const onPick = useCallback(async (project: Project) => {
-    await setProject(project.id);
+    // Stash the name alongside the id so the home header chip
+    // can render the project name immediately instead of
+    // showing the uuid prefix until projects sync lands.
+    await setProject(project.id, project.name || null);
     // Kick a fresh pull immediately so the home list isn't empty
     // when we navigate back. Fire-and-forget — the periodic sync
     // would catch up anyway.

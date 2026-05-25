@@ -30,13 +30,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { eq, asc } from 'drizzle-orm';
+import { eq, asc, desc } from 'drizzle-orm';
 import { pullAll } from '@/lib/local-sync';
 
 import { useAuth } from '@/lib/auth-context';
 import { apiPost } from '@/lib/api';
 import { db } from '@/db';
-import { tasks, taskItems, workerEarnings } from '@/db/schema';
+import { tasks, taskItems, workerEarnings, fieldReports } from '@/db/schema';
 
 interface TaskRow {
   id: string;
@@ -47,6 +47,24 @@ interface TaskRow {
   priority: string | null;
   budget: number | null;
   assigneeId: string | null;
+  materials: string | null;
+  deadline: string | null;
+}
+
+interface MaterialItem {
+  name?: string;
+  quantity?: number | string;
+  unit?: string;
+  note?: string;
+  inventoryItemId?: string;
+}
+
+interface ReportRow {
+  id: string;
+  title: string | null;
+  body: string | null;
+  kind: string | null;
+  createdAt: string | null;
 }
 
 interface ItemRow {
@@ -74,6 +92,8 @@ export default function TaskDetailScreen() {
   const [task, setTask] = useState<TaskRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [earnings, setEarnings] = useState<EarningsRollup | null>(null);
+  const [materials, setMaterials] = useState<MaterialItem[]>([]);
+  const [reports, setReports] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -90,11 +110,42 @@ export default function TaskDetailScreen() {
         priority: tasks.priority,
         budget: tasks.budget,
         assigneeId: tasks.assigneeId,
+        materials: tasks.materials,
+        deadline: tasks.deadline,
       })
       .from(tasks)
       .where(eq(tasks.id, id))
       .limit(1);
     setTask(t ?? null);
+
+    // Materials list — backend stores as JSON array on the task row.
+    // Local SQLite holds the same JSON as a text column, so we
+    // parse on read.
+    let parsedMaterials: MaterialItem[] = [];
+    if (t?.materials) {
+      try {
+        const arr = JSON.parse(t.materials);
+        if (Array.isArray(arr)) parsedMaterials = arr;
+      } catch {
+        /* malformed materials JSON — show empty */
+      }
+    }
+    setMaterials(parsedMaterials);
+
+    // Reports filtered to this specific task. Matches the web app's
+    // Reports tab inside TaskFormModal.
+    const reportRows = await db
+      .select({
+        id: fieldReports.id,
+        title: fieldReports.title,
+        body: fieldReports.body,
+        kind: fieldReports.kind,
+        createdAt: fieldReports.createdAt,
+      })
+      .from(fieldReports)
+      .where(eq(fieldReports.taskId, id))
+      .orderBy(desc(fieldReports.createdAt));
+    setReports(reportRows);
 
     const itemRows = await db
       .select({
@@ -240,6 +291,41 @@ export default function TaskDetailScreen() {
 
             {earnings && <EarningsHeader rollup={earnings} />}
 
+            {/* Materials — backend's `materials` JSON on the task.
+                Mirrors mockup-4's "You may request these from
+                inventory" block. Soft-link to inventory items
+                preserves the catalog pill but the field worker
+                doesn't need to see it — name+qty+unit is enough. */}
+            {materials.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>Materials needed</Text>
+                <View style={styles.materialsCard}>
+                  {materials.map((m, i) => (
+                    <View
+                      key={`${m.name}-${i}`}
+                      style={[
+                        styles.materialRow,
+                        i < materials.length - 1 && styles.materialRowBorder,
+                      ]}
+                    >
+                      <Ionicons name="cube-outline" size={18} color="#6b7280" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.materialName}>
+                          {m.name || '(unnamed)'}
+                        </Text>
+                        {(m.quantity || m.unit) && (
+                          <Text style={styles.materialQty}>
+                            {m.quantity ?? '?'}
+                            {m.unit ? ` ${m.unit}` : ''}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
+
             <Text style={styles.sectionTitle}>Definition of Done</Text>
           </>
         }
@@ -261,8 +347,78 @@ export default function TaskDetailScreen() {
             onReject={() => fireTransition(item.id, 'reject')}
           />
         )}
+        ListFooterComponent={
+          <>
+            {/* Task-scoped reports. Matches the web app's "Reports"
+                tab on TaskFormModal — filtered to reports whose
+                taskId matches this task. A "+ File a report"
+                action opens the compose modal with taskId
+                pre-stamped (handled by the compose screen). */}
+            <View style={styles.reportsHeader}>
+              <Text style={styles.sectionTitle}>Reports for this task</Text>
+              <TouchableOpacity
+                onPress={() =>
+                  router.push(`/report/new?taskId=${task.id}`)
+                }
+                style={styles.fileBtn}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add" size={16} color="#1a73e8" />
+                <Text style={styles.fileBtnText}>File</Text>
+              </TouchableOpacity>
+            </View>
+            {reports.length === 0 ? (
+              <View style={styles.emptySection}>
+                <Text style={styles.emptyBody}>
+                  No reports filed against this task yet. Tap "File" to
+                  send your first one.
+                </Text>
+              </View>
+            ) : (
+              reports.map((r) => <ReportRowView key={r.id} report={r} />)
+            )}
+          </>
+        }
       />
     </SafeAreaView>
+  );
+}
+
+// ─── Per-task report row ────────────────────────────────────────
+// Same data path as the Reports tab but scoped to the task.
+// Tapping opens... eventually a report detail screen with the
+// thread — for now it's a read-only summary.
+function ReportRowView({ report }: { report: ReportRow }) {
+  const icon =
+    report.kind === 'incident'
+      ? 'warning-outline'
+      : report.kind === 'material_request'
+        ? 'cube-outline'
+        : report.kind === 'confirmation_request'
+          ? 'help-circle-outline'
+          : 'chatbubble-outline';
+  const color =
+    report.kind === 'incident' ? '#dc2626' : '#6b7280';
+  const date = report.createdAt
+    ? new Date(report.createdAt).toLocaleString()
+    : '';
+  return (
+    <View style={styles.reportRow}>
+      <View style={[styles.reportIcon, { backgroundColor: `${color}15` }]}>
+        <Ionicons name={icon as any} size={16} color={color} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.reportTitle} numberOfLines={1}>
+          {report.title ?? report.kind ?? 'Note'}
+        </Text>
+        {report.body ? (
+          <Text style={styles.reportBody} numberOfLines={2}>
+            {report.body}
+          </Text>
+        ) : null}
+        {date && <Text style={styles.reportDate}>{date}</Text>}
+      </View>
+    </View>
   );
 }
 
@@ -513,6 +669,64 @@ const styles = StyleSheet.create({
     marginBottom: 2,
     paddingHorizontal: 4,
   },
+  materialsCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  materialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  materialRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  materialName: { fontSize: 14, color: '#111827', fontWeight: '500' },
+  materialQty: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  reportsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    marginBottom: 6,
+    paddingHorizontal: 4,
+  },
+  fileBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#eff6ff',
+    borderRadius: 999,
+  },
+  fileBtnText: { fontSize: 12, color: '#1a73e8', fontWeight: '600' },
+  reportRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    marginBottom: 6,
+  },
+  reportIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportTitle: { fontSize: 14, fontWeight: '500', color: '#111827' },
+  reportBody: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  reportDate: { fontSize: 11, color: '#9ca3af', marginTop: 3 },
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',

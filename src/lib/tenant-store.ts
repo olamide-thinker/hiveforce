@@ -21,6 +21,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export interface Tenant {
   organizationId?: string | null;
   branchId?: string | null;
+  /**
+   * Human-readable project name for the active branchId, cached from
+   * the picker so the header chip can render immediately without
+   * waiting for the projects table to sync. Lookups against
+   * project rows in local SQLite remain the source of truth when
+   * the name needs to be refreshed for a project that was renamed
+   * remotely.
+   */
+  branchName?: string | null;
   userId?: string | null;
 }
 
@@ -29,8 +38,11 @@ const STORAGE_KEY = '@shan-field-app/active-project';
 let current: Tenant = {
   organizationId: null,
   branchId: null,
+  branchName: null,
   userId: null,
 };
+
+const STORAGE_NAME_KEY = '@shan-field-app/active-project-name';
 
 const listeners = new Set<(t: Tenant) => void>();
 
@@ -56,12 +68,25 @@ export function setOrganization(organizationId: string | null): void {
  * doesn't have to re-pick on every cold start. The "active project"
  * is per-user state — we clear it on sign-out.
  */
-export async function setProject(projectId: string | null): Promise<void> {
-  current = { ...current, branchId: projectId };
+export async function setProject(
+  projectId: string | null,
+  projectName?: string | null,
+): Promise<void> {
+  current = {
+    ...current,
+    branchId: projectId,
+    branchName: projectName ?? null,
+  };
   if (projectId) {
     await AsyncStorage.setItem(STORAGE_KEY, projectId);
+    if (projectName) {
+      await AsyncStorage.setItem(STORAGE_NAME_KEY, projectName);
+    } else {
+      await AsyncStorage.removeItem(STORAGE_NAME_KEY);
+    }
   } else {
     await AsyncStorage.removeItem(STORAGE_KEY);
+    await AsyncStorage.removeItem(STORAGE_NAME_KEY);
   }
   emit();
 }
@@ -73,8 +98,9 @@ export async function setProject(projectId: string | null): Promise<void> {
  */
 export async function restoreActiveProject(): Promise<string | null> {
   const stored = await AsyncStorage.getItem(STORAGE_KEY);
+  const storedName = await AsyncStorage.getItem(STORAGE_NAME_KEY);
   if (stored) {
-    current = { ...current, branchId: stored };
+    current = { ...current, branchId: stored, branchName: storedName };
     emit();
   }
   return stored;
@@ -101,8 +127,14 @@ export function useTenant(): Tenant {
 
 /** Clear everything. Called on sign-out. */
 export async function clearTenant(): Promise<void> {
-  current = { organizationId: null, branchId: null, userId: null };
+  current = {
+    organizationId: null,
+    branchId: null,
+    branchName: null,
+    userId: null,
+  };
   await AsyncStorage.removeItem(STORAGE_KEY);
+  await AsyncStorage.removeItem(STORAGE_NAME_KEY);
   emit();
 }
 

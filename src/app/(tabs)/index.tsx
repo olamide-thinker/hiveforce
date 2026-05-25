@@ -62,17 +62,30 @@ export default function HomeScreen() {
       return;
     }
 
-    // Resolve project name for the header — comes from synced rows
-    // in `projects` (synced separately by sync-core). Falls back to
-    // the id prefix if the row hasn't landed yet.
-    const projRow = await db
-      .select({ name: projectsTable.name })
-      .from(projectsTable)
-      .where(eq(projectsTable.id, activeProjectId))
-      .limit(1);
-    setActiveProjectName(projRow[0]?.name ?? activeProjectId.slice(0, 8));
+    // Resolve project name for the header — prefer the cached name
+    // from the tenant store (set on pick), fall back to local
+    // SQLite projects row, then the id prefix as last resort. The
+    // cache means workers see the project name instantly without
+    // waiting for the projects table to sync.
+    let projectName: string | null = tenant.branchName ?? null;
+    if (!projectName) {
+      const projRow = await db
+        .select({ name: projectsTable.name })
+        .from(projectsTable)
+        .where(eq(projectsTable.id, activeProjectId))
+        .limit(1);
+      projectName = projRow[0]?.name ?? null;
+    }
+    setActiveProjectName(projectName ?? activeProjectId.slice(0, 8));
 
-    const rows = await db
+    // Filter to tasks the worker is actually involved in — assigned
+    // to them, supervising, OR they created it. Project owners see
+    // everything (the matcher below treats them as a special case).
+    // crew_ids is a JSON-stringified array in our local schema, so
+    // we can't do a clean SQL filter on it; we filter post-load
+    // for that bucket. Cheap at field-worker volumes (dozens of
+    // tasks per project, not thousands).
+    const allRows = await db
       .select({
         id: tasks.id,
         taskCode: tasks.taskCode,
@@ -80,12 +93,45 @@ export default function HomeScreen() {
         status: tasks.status,
         priority: tasks.priority,
         updatedAt: tasks.updatedAt,
+        assigneeId: tasks.assigneeId,
+        supervisorId: tasks.supervisorId,
+        createdById: tasks.createdById,
+        crewIds: tasks.crewIds,
       })
       .from(tasks)
       .where(eq(tasks.projectId, activeProjectId))
       .orderBy(desc(tasks.updatedAt));
-    setItems(rows);
-  }, [activeProjectId]);
+
+    const uid = user?.uid;
+    // If the user owns the project they see everything; otherwise
+    // we filter to assignee/supervisor/creator/crew membership.
+    const projOwnerRow = await db
+      .select({ ownerId: projectsTable.ownerId })
+      .from(projectsTable)
+      .where(eq(projectsTable.id, activeProjectId))
+      .limit(1);
+    const isOwner = uid && projOwnerRow[0]?.ownerId === uid;
+
+    const filtered = isOwner
+      ? allRows
+      : allRows.filter((t) => {
+          if (!uid) return false;
+          if (t.assigneeId === uid) return true;
+          if (t.supervisorId === uid) return true;
+          if (t.createdById === uid) return true;
+          if (t.crewIds) {
+            try {
+              const crew = JSON.parse(t.crewIds);
+              if (Array.isArray(crew) && crew.includes(uid)) return true;
+            } catch {
+              /* malformed crewIds JSON — skip */
+            }
+          }
+          return false;
+        });
+
+    setItems(filtered);
+  }, [activeProjectId, tenant.branchName, user?.uid]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

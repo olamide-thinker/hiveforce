@@ -68,6 +68,21 @@ const logger = {
   },
 };
 
+// ─── dbUtils shim ─────────────────────────────────────────────────
+// sync-rn calls getDb().getActiveDb() / .fetchAllRecords() — methods
+// from the original dbUtils wrapper used in the syncsalez vendor
+// app. We don't use any of these for real work (our local-sync.ts
+// queries drizzle directly), but the shim has to exist or sync-rn
+// crashes from MediaDeletionManager / count-check.
+const dbUtilsShim = {
+  getActiveDb: () => db,
+  fetchAllRecords: async () => [] as any[],
+  fetchRecord: async () => null,
+  insertRecord: async () => null,
+  updateRecord: async () => null,
+  deleteRecord: async () => null,
+};
+
 // ─── Stub media service ────────────────────────────────────────────
 // Phase 1e replaces this with a real expo-file-system-backed
 // uploader. Until then, every media call resolves to "configured but
@@ -113,7 +128,14 @@ const tracking = {
  * synchronously at module-load closes the race.
  */
 const bridgeConfig: BridgeConfiguration = {
-  getDb: () => db,
+  // sync-rn's internals (MediaDeletionManager, count-checks, etc.)
+  // call dbUtils methods like .getActiveDb() and .fetchAllRecords()
+  // — they were designed around a dbUtils wrapper, not raw drizzle.
+  // We return a tiny shim that satisfies the interface and points
+  // back at the real drizzle handle for the one method that
+  // matters (getActiveDb). Everything else is a safe no-op since
+  // we've already halted sync-rn's auto-loop above.
+  getDb: () => dbUtilsShim,
   getSchema: () => schema,
   getApiClient: () => apiClient,
   getTenantContext: () => getTenantContext(),

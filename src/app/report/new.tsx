@@ -26,7 +26,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { pullAll } from '@/lib/local-sync';
 
@@ -54,6 +54,10 @@ const KIND_OPTIONS: { kind: ReportKind; label: string; icon: any }[] = [
 
 export default function NewReportScreen() {
   const tenant = useTenant();
+  // Optional taskId from the route query — set when this screen is
+  // opened from a task's "File a report" button. Stamps the report
+  // so it shows up in the task's Reports section.
+  const { taskId } = useLocalSearchParams<{ taskId?: string }>();
   const [kind, setKind] = useState<ReportKind>('note');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -82,6 +86,11 @@ export default function NewReportScreen() {
           kind,
           title: title.trim() || undefined,
           body: body.trim(),
+          // When opened from a task's "File a report" button the
+          // taskId is in the route query, so the new report shows
+          // up in that task's Reports section after sync. Otherwise
+          // the report stays project-scoped.
+          taskId: taskId || undefined,
         });
       }
       // Force the entity to land in local SQLite before the user
