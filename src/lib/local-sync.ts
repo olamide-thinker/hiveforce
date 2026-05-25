@@ -211,20 +211,28 @@ async function upsertRow(table: string, row: Record<string, any>): Promise<void>
   // are server-truth, not local-dirty.
   pairs.push(['sync_status', 'synced']);
 
+  // We build the statement with drizzle's `sql` tag so values get
+  // bound as parameters (safe against any weird characters in
+  // string columns). Table name, column names, and the UPDATE
+  // clause are structural — embedded via sql.raw — since the
+  // whitelist above guarantees they're safe.
   const colNames = pairs.map(([k]) => k).join(', ');
-  const placeholders = pairs.map(() => '?').join(', ');
   const updates = pairs
     .filter(([k]) => k !== 'id')
     .map(([k]) => `${k}=excluded.${k}`)
     .join(', ');
   const values = pairs.map(([, v]) => v);
 
+  // sql.join with sql`${v}` interpolation gives us parameterized
+  // VALUES (?, ?, ?, …) under the hood — drizzle binds them
+  // properly to the SQLite driver.
+  const valuesSql = sql.join(
+    values.map((v) => sql`${v}`),
+    sql.raw(', '),
+  );
+
   await db.run(
-    sql.raw(
-      `INSERT INTO ${table} (${colNames}) VALUES (${placeholders}) ` +
-        `ON CONFLICT(id) DO UPDATE SET ${updates}`,
-    ),
-    ...values,
+    sql`INSERT INTO ${sql.raw(table)} (${sql.raw(colNames)}) VALUES (${valuesSql}) ON CONFLICT(id) DO UPDATE SET ${sql.raw(updates)}`,
   );
 }
 

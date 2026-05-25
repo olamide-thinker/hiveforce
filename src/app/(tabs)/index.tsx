@@ -42,7 +42,7 @@ interface LocalTask {
 }
 
 export default function HomeScreen() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { state: syncState } = useSync();
   const tenant = useTenant();
   const [items, setItems] = useState<LocalTask[]>([]);
@@ -124,9 +124,8 @@ export default function HomeScreen() {
           </View>
           <Ionicons name="chevron-down" size={18} color="#6b7280" />
         </Pressable>
-        <TouchableOpacity onPress={() => signOut()} style={styles.signOutBtn}>
-          <Ionicons name="log-out-outline" size={20} color="#374151" />
-        </TouchableOpacity>
+        {/* Sign-out moved to the Profile tab. The Tasks header
+            stays focused on the project switcher. */}
       </View>
 
       <SyncStatusBanner state={syncState} lastError={lastSyncError} />
