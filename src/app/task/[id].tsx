@@ -47,6 +47,9 @@ interface TaskRow {
   priority: string | null;
   budget: number | null;
   assigneeId: string | null;
+  supervisorId: string | null;
+  supervisorName: string | null;
+  assigneeName: string | null;
   materials: string | null;
   deadline: string | null;
 }
@@ -110,6 +113,9 @@ export default function TaskDetailScreen() {
         priority: tasks.priority,
         budget: tasks.budget,
         assigneeId: tasks.assigneeId,
+        supervisorId: tasks.supervisorId,
+        supervisorName: tasks.supervisorName,
+        assigneeName: tasks.assigneeName,
         materials: tasks.materials,
         deadline: tasks.deadline,
       })
@@ -287,6 +293,40 @@ export default function TaskDetailScreen() {
                   <Text style={styles.priorityChip}>{task.priority}</Text>
                 )}
               </View>
+
+              {/* ─── Info grid: budget · deadline · supervisor ─── */}
+              {/* Mirrors the web app's task overview: the four
+                  pieces of info a worker needs at a glance —
+                  what's the pay, when's it due, who's the boss,
+                  who's the assignee. Empty rows render dashes
+                  rather than disappearing so the layout is
+                  predictable. */}
+              <View style={styles.infoGrid}>
+                <InfoCell
+                  icon="wallet-outline"
+                  label="Budget"
+                  value={
+                    typeof task.budget === 'number' && task.budget > 0
+                      ? `₦${task.budget.toLocaleString()}`
+                      : '—'
+                  }
+                />
+                <InfoCell
+                  icon="calendar-outline"
+                  label="Deadline"
+                  value={formatDeadline(task.deadline)}
+                />
+                <InfoCell
+                  icon="person-outline"
+                  label="Supervisor"
+                  value={task.supervisorName ?? '—'}
+                />
+                <InfoCell
+                  icon="construct-outline"
+                  label="Assignee"
+                  value={task.assigneeName ?? '—'}
+                />
+              </View>
             </View>
 
             {earnings && <EarningsHeader rollup={earnings} />}
@@ -298,7 +338,28 @@ export default function TaskDetailScreen() {
                 doesn't need to see it — name+qty+unit is enough. */}
             {materials.length > 0 && (
               <>
-                <Text style={styles.sectionTitle}>Materials needed</Text>
+                <View style={styles.materialsHeader}>
+                  <Text style={styles.sectionTitle}>Materials needed</Text>
+                  {/* Open the report compose pre-stamped with
+                      kind=material_request + this task's materials
+                      pre-loaded as the items list. The compose
+                      screen will render an item-editor for that
+                      kind so the worker can refine quantities
+                      before sending the formal request to the
+                      inventory manager. */}
+                  <TouchableOpacity
+                    onPress={() =>
+                      router.push(
+                        `/report/new?taskId=${task.id}&kind=material_request&seedFromTask=1`,
+                      )
+                    }
+                    style={styles.fileBtn}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="paper-plane-outline" size={14} color="#1a73e8" />
+                    <Text style={styles.fileBtnText}>Request</Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={styles.materialsCard}>
                   {materials.map((m, i) => (
                     <View
@@ -539,6 +600,56 @@ function ItemRow({
   );
 }
 
+/**
+ * Single icon + label + value cell for the task info grid. Two
+ * cells per row at 50% width keeps things readable on a 360px
+ * worker phone (Tecno / Itel screens) — narrower cells would
+ * truncate the supervisor's fullName.
+ */
+function InfoCell({
+  icon,
+  label,
+  value,
+}: {
+  icon: any;
+  label: string;
+  value: string;
+}) {
+  return (
+    <View style={styles.infoCell}>
+      <View style={styles.infoCellIcon}>
+        <Ionicons name={icon} size={14} color="#6b7280" />
+        <Text style={styles.infoCellLabel}>{label}</Text>
+      </View>
+      <Text style={styles.infoCellValue} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * "24-Jun-2026 (24 days left)" — matches the formatting on the
+ * mockup-2 header. Past-deadline tasks switch to "overdue X days".
+ */
+function formatDeadline(iso: string | null): string {
+  if (!iso) return '—';
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return '—';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.ceil((t.getTime() - today.getTime()) / 86_400_000);
+  const datePart = t.toLocaleDateString(undefined, {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+  if (diffDays < 0) return `${datePart} (${-diffDays}d overdue)`;
+  if (diffDays === 0) return `${datePart} (today)`;
+  if (diffDays === 1) return `${datePart} (1d left)`;
+  return `${datePart} (${diffDays}d left)`;
+}
+
 function StatusBadge({ status }: { status: string | null }) {
   const colors = (() => {
     switch (status) {
@@ -665,6 +776,44 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+    marginTop: 10,
+    marginBottom: 2,
+    paddingHorizontal: 4,
+  },
+  // Info grid: 4 cells (budget · deadline · supervisor · assignee).
+  // Two per row at ~50% width with a small gap. Wraps gracefully.
+  infoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 10,
+    gap: 10,
+  },
+  infoCell: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    gap: 4,
+  },
+  infoCellIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  infoCellLabel: {
+    fontSize: 11,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  infoCellValue: {
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '500',
+  },
+  materialsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginTop: 10,
     marginBottom: 2,
     paddingHorizontal: 4,

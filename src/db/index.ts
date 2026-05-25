@@ -73,6 +73,9 @@ export async function runMigrations(): Promise<void> {
       created_by_id TEXT,
       supervisor_id TEXT,
       assignee_id TEXT,
+      supervisor_name TEXT,
+      assignee_name TEXT,
+      created_by_name TEXT,
       crew_ids TEXT,
       materials TEXT,
       budget INTEGER,
@@ -87,6 +90,12 @@ export async function runMigrations(): Promise<void> {
       updated_at TEXT,
       sync_status TEXT DEFAULT 'synced'
     )`,
+    // ALTER for users who already have the tasks table — ADD
+    // COLUMN IF NOT EXISTS for safety. SQLite's idempotency
+    // protects against double-add on cold boot.
+    `ALTER TABLE tasks ADD COLUMN supervisor_name TEXT`,
+    `ALTER TABLE tasks ADD COLUMN assignee_name TEXT`,
+    `ALTER TABLE tasks ADD COLUMN created_by_name TEXT`,
     `CREATE TABLE IF NOT EXISTS task_items (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -209,7 +218,24 @@ export async function runMigrations(): Promise<void> {
   ];
 
   for (const stmt of statements) {
-    await db.run(sql.raw(stmt));
+    try {
+      await db.run(sql.raw(stmt));
+    } catch (err: any) {
+      // SQLite's ALTER TABLE ADD COLUMN throws "duplicate column"
+      // on re-runs. We tolerate that here because the migration
+      // runner is invoked on every cold boot (it's idempotent by
+      // intent); a column that already exists is success, not
+      // failure. CREATE TABLE IF NOT EXISTS and CREATE INDEX IF
+      // NOT EXISTS already self-tolerate.
+      const msg = String(err?.message ?? err).toLowerCase();
+      if (
+        msg.includes('duplicate column') ||
+        msg.includes('already exists')
+      ) {
+        continue;
+      }
+      throw err;
+    }
   }
 }
 

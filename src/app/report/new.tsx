@@ -11,7 +11,11 @@
  * geo-stamping land in Phase 1e.next once we add expo-camera +
  * expo-av + expo-location.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { eq } from 'drizzle-orm';
+
+import { db } from '@/db';
+import { tasks } from '@/db/schema';
 import {
   ActivityIndicator,
   Alert,
@@ -71,17 +75,91 @@ interface PendingAttachment {
   durationSec?: number;
 }
 
+/**
+ * Per-item shape for a material_request. Mirrors the web app's
+ * `request.items[]` payload that the backend's field-reports
+ * controller validates (it requires name + quantity per row).
+ *
+ * inventoryItemId is a soft-link to an inventory_items row when
+ * the worker happens to know the catalog id; usually the worker
+ * just types a name + quantity and the inventory manager
+ * fulfills against the catalog server-side.
+ */
+interface MaterialReqItem {
+  name: string;
+  quantity: string;
+  unit?: string;
+  inventoryItemId?: string;
+}
+
+const STATUS_OPTIONS = ['pending', 'progress', 'done', 'cancelled'] as const;
+type RequestedStatus = (typeof STATUS_OPTIONS)[number];
+
 export default function NewReportScreen() {
   const tenant = useTenant();
-  // Optional taskId from the route query — set when this screen is
-  // opened from a task's "File a report" button. Stamps the report
-  // so it shows up in the task's Reports section.
-  const { taskId } = useLocalSearchParams<{ taskId?: string }>();
-  const [kind, setKind] = useState<ReportKind>('note');
+  // Optional route params:
+  //   taskId        — stamp report onto a task (from task detail)
+  //   kind          — pre-select a kind (from "Request materials")
+  //   seedFromTask  — when 1, prime the materials list from the
+  //                   task's `materials` JSON so the worker can
+  //                   tweak qty rather than retyping everything
+  const {
+    taskId,
+    kind: initialKind,
+    seedFromTask,
+  } = useLocalSearchParams<{
+    taskId?: string;
+    kind?: ReportKind;
+    seedFromTask?: string;
+  }>();
+
+  const [kind, setKind] = useState<ReportKind>(initialKind ?? 'note');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // ─── Per-kind extras ───────────────────────────────────────────
+  // material_request items (name + qty + unit per row)
+  const [items, setItems] = useState<MaterialReqItem[]>([]);
+  // confirmation_request: which task to ask about + what status
+  const [confirmStatus, setConfirmStatus] =
+    useState<RequestedStatus>('done');
+
+  // Seed the items list from the task's materials JSON when arriving
+  // via the "Request" button on task detail. We pull from local
+  // SQLite so the seeding works offline. The seed is a starting
+  // point — the worker can edit qty / add / remove freely.
+  useEffect(() => {
+    if (!taskId || seedFromTask !== '1' || kind !== 'material_request') return;
+    void (async () => {
+      try {
+        const [t] = await db
+          .select({ materials: tasks.materials })
+          .from(tasks)
+          .where(eq(tasks.id, taskId))
+          .limit(1);
+        if (!t?.materials) return;
+        const arr = JSON.parse(t.materials);
+        if (Array.isArray(arr)) {
+          const seeded = arr
+            .map((m: any) => ({
+              name: String(m?.name ?? '').trim(),
+              quantity: String(m?.quantity ?? '').trim(),
+              unit: typeof m?.unit === 'string' ? m.unit : undefined,
+              inventoryItemId:
+                typeof m?.inventoryItemId === 'string'
+                  ? m.inventoryItemId
+                  : undefined,
+            }))
+            .filter((m) => m.name);
+          setItems(seeded);
+        }
+      } catch {
+        /* malformed JSON — start empty, no big deal */
+      }
+    })();
+  }, [taskId, seedFromTask, kind]);
 
   // Audio recorder — RECORDING_PRESETS.HIGH_QUALITY gives an mp4-
   // wrapped AAC-LC encoding that's small enough for cellular
@@ -209,7 +287,23 @@ export default function NewReportScreen() {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  const canSubmit = body.trim().length > 0 && !!tenant.branchId && !submitting;
+  // Submit gate is kind-aware:
+  //   - material_request: at least one item with a name & qty (body
+  //     optional)
+  //   - confirmation_request: needs a target task + a status
+  //   - everything else: body required
+  const canSubmit = (() => {
+    if (submitting || !tenant.branchId) return false;
+    if (kind === 'material_request') {
+      return items.some(
+        (it) => it.name.trim() && it.quantity.trim(),
+      );
+    }
+    if (kind === 'confirmation_request') {
+      return !!taskId && !!confirmStatus;
+    }
+    return body.trim().length > 0;
+  })();
 
   async function onSubmit() {
     if (!canSubmit) return;
@@ -250,6 +344,34 @@ export default function NewReportScreen() {
             attachmentRecords.length > 0 ? attachmentRecords : undefined,
         });
       } else {
+        // Build kind-specific `request` payload that the backend's
+        // field-reports controller knows how to validate.
+        let request: any = undefined;
+        if (kind === 'material_request') {
+          // Backend requires at least one item with name + qty.
+          const cleaned = items
+            .map((it) => ({
+              name: it.name.trim(),
+              quantity: it.quantity.trim(),
+              unit: it.unit?.trim() || undefined,
+              inventoryItemId: it.inventoryItemId || undefined,
+            }))
+            .filter((it) => it.name && it.quantity);
+          if (cleaned.length === 0) {
+            throw new Error('Add at least one material with name + quantity');
+          }
+          request = { items: cleaned, note: title.trim() || undefined };
+        } else if (kind === 'confirmation_request') {
+          if (!taskId) {
+            throw new Error('Confirmation requests need a target task — open from a task');
+          }
+          request = {
+            targetTaskId: taskId,
+            requestedStatus: confirmStatus,
+            note: title.trim() || undefined,
+          };
+        }
+
         await apiPost('/api/field-reports', {
           projectId: tenant.branchId,
           kind,
@@ -260,6 +382,7 @@ export default function NewReportScreen() {
           // up in that task's Reports section after sync. Otherwise
           // the report stays project-scoped.
           taskId: taskId || undefined,
+          request,
           attachments:
             attachmentRecords.length > 0 ? attachmentRecords : undefined,
         });
@@ -359,15 +482,148 @@ export default function NewReportScreen() {
             placeholder={
               kind === 'daily_log'
                 ? 'What was done today?'
-                : 'What happened?'
+                : kind === 'material_request'
+                  ? 'Optional note to the inventory manager'
+                  : kind === 'confirmation_request'
+                    ? 'Why are you asking the supervisor to confirm?'
+                    : 'What happened?'
             }
             value={body}
             onChangeText={setBody}
             style={styles.bodyInput}
             multiline
             editable={!submitting}
-            autoFocus
+            autoFocus={kind !== 'material_request'}
           />
+
+          {/* ─── Material request: items list ─── */}
+          {/* Mirrors mockup-4's "You may request these from inventory"
+              block and the web app's material_request items editor.
+              Each row is name + quantity + unit. Empty rows render
+              when seedFromTask=1 plays back the task's materials,
+              and the worker can edit/remove/add freely before send. */}
+          {kind === 'material_request' && (
+            <View style={{ gap: 8 }}>
+              <Text style={styles.sectionLabel}>Items to request</Text>
+              {items.map((it, i) => (
+                <View key={i} style={styles.itemRow}>
+                  <TextInput
+                    placeholder="Item name"
+                    value={it.name}
+                    onChangeText={(v) =>
+                      setItems((prev) =>
+                        prev.map((p, idx) =>
+                          idx === i ? { ...p, name: v } : p,
+                        ),
+                      )
+                    }
+                    style={[styles.itemInput, { flex: 2 }]}
+                    editable={!submitting}
+                  />
+                  <TextInput
+                    placeholder="Qty"
+                    value={it.quantity}
+                    onChangeText={(v) =>
+                      setItems((prev) =>
+                        prev.map((p, idx) =>
+                          idx === i ? { ...p, quantity: v } : p,
+                        ),
+                      )
+                    }
+                    style={[styles.itemInput, { flex: 1 }]}
+                    editable={!submitting}
+                    keyboardType="numeric"
+                  />
+                  <TextInput
+                    placeholder="Unit"
+                    value={it.unit ?? ''}
+                    onChangeText={(v) =>
+                      setItems((prev) =>
+                        prev.map((p, idx) =>
+                          idx === i ? { ...p, unit: v } : p,
+                        ),
+                      )
+                    }
+                    style={[styles.itemInput, { flex: 1 }]}
+                    editable={!submitting}
+                  />
+                  <Pressable
+                    onPress={() =>
+                      setItems((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                    hitSlop={8}
+                    style={styles.itemRemove}
+                  >
+                    <Ionicons name="close" size={18} color="#991b1b" />
+                  </Pressable>
+                </View>
+              ))}
+              <TouchableOpacity
+                onPress={() =>
+                  setItems((prev) => [
+                    ...prev,
+                    { name: '', quantity: '', unit: '' },
+                  ])
+                }
+                style={styles.itemAddBtn}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add-circle-outline" size={18} color="#1a73e8" />
+                <Text style={styles.itemAddText}>Add item</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ─── Confirmation request: target status ─── */}
+          {/* The web app lets the worker propose a status change
+              for the supervisor to approve. We require taskId (came
+              from the task detail screen) and let the worker pick
+              the target status. */}
+          {kind === 'confirmation_request' && (
+            <View style={{ gap: 8 }}>
+              <Text style={styles.sectionLabel}>
+                Requested task status
+              </Text>
+              <View style={styles.statusRow}>
+                {STATUS_OPTIONS.map((s) => {
+                  const active = s === confirmStatus;
+                  return (
+                    <TouchableOpacity
+                      key={s}
+                      onPress={() => setConfirmStatus(s)}
+                      style={[
+                        styles.statusChip,
+                        active && styles.statusChipActive,
+                      ]}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.statusChipText,
+                          active && { color: '#fff' },
+                        ]}
+                      >
+                        {s}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              {!taskId && (
+                <View style={styles.warnBanner}>
+                  <Ionicons
+                    name="alert-circle"
+                    size={16}
+                    color="#92400e"
+                  />
+                  <Text style={styles.warnText}>
+                    Confirmation requests must be opened from a
+                    specific task.
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* ─── Attachments ─── */}
           {/* Two-button row to give parity between "pick existing"
@@ -540,6 +796,61 @@ const styles = StyleSheet.create({
   // ─── Attachment picker styles ──────────────────────────────────
   // Twin pill buttons for camera + gallery. Equal flex so the row
   // feels symmetric whatever the icon labels render at.
+  // ─── Per-kind extras ─────────────────────────────────────────
+  sectionLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginTop: 4,
+  },
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  itemInput: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  itemRemove: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#1a73e8',
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  itemAddText: { color: '#1a73e8', fontWeight: '600', fontSize: 13 },
+  statusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  statusChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#f3f4f6',
+  },
+  statusChipActive: { backgroundColor: '#1a73e8' },
+  statusChipText: {
+    fontSize: 13,
+    color: '#374151',
+    fontWeight: '500',
+    textTransform: 'uppercase',
+  },
   attachRow: { flexDirection: 'row', gap: 8 },
   attachBtn: {
     flex: 1,

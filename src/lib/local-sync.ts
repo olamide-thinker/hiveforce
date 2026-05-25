@@ -157,6 +157,7 @@ async function upsertRow(table: string, row: Record<string, any>): Promise<void>
       'id', 'task_code', 'project_id', 'business_id', 'title', 'details',
       'status', 'priority', 'deadline', 'duration_days', 'created_by_id',
       'supervisor_id', 'assignee_id', 'crew_ids', 'materials', 'budget',
+      'supervisor_name', 'assignee_name', 'created_by_name',
       'location_type', 'location_doc_id', 'location_zone_id', 'location_text',
       'stage_id', 'milestone_id', 'metadata', 'created_at', 'updated_at',
     ],
@@ -263,7 +264,7 @@ export async function pullEntity(name: string): Promise<number> {
 
   for (const row of rows) {
     try {
-      await upsertRow(name, row);
+      await upsertRow(name, flattenHydratedUsers(row));
     } catch (err) {
       // Surface but don't abort the whole pull — bad row better
       // than no rows. The next pull will retry with a newer cursor.
@@ -272,6 +273,30 @@ export async function pullEntity(name: string): Promise<number> {
     }
   }
   return rows.length;
+}
+
+/**
+ * Backend hydrates `supervisor`, `assignee`, `createdBy` as nested
+ * `{ id, fullName, email }` objects on each task row. SQLite is
+ * flat — we denormalize the names into supervisor_name / assignee_
+ * name / created_by_name columns so the task detail screen renders
+ * names without a per-render lookup and works offline.
+ *
+ * The original *Id columns stay populated from the row as before.
+ * Other entities don't ship hydrated users, so this is a no-op on
+ * worker_earnings / field_reports / etc.
+ */
+function flattenHydratedUsers(row: any): any {
+  if (!row) return row;
+  const out: any = { ...row };
+  const pickName = (u: any): string | null =>
+    u && typeof u === 'object'
+      ? u.fullName || u.full_name || u.email || null
+      : null;
+  if (row.supervisor) out.supervisor_name = pickName(row.supervisor);
+  if (row.assignee) out.assignee_name = pickName(row.assignee);
+  if (row.createdBy) out.created_by_name = pickName(row.createdBy);
+  return out;
 }
 
 /**

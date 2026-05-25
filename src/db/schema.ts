@@ -61,6 +61,14 @@ export const tasks = sqliteTable('tasks', {
   createdById: text('created_by_id'),
   supervisorId: text('supervisor_id'),
   assigneeId: text('assignee_id'),
+  // Denormalized display names — populated from the backend's
+  // hydrated /api/tasks response (each task carries embedded
+  // {supervisor, assignee, createdBy} user objects). Storing them
+  // locally means the task detail screen renders names without
+  // making per-render lookup calls and works fully offline.
+  supervisorName: text('supervisor_name'),
+  assigneeName: text('assignee_name'),
+  createdByName: text('created_by_name'),
   // JSONB on Postgres → JSON-stringified text on SQLite. Helpers
   // in repositories layer parse on read, stringify on write.
   crewIds: text('crew_ids'),
