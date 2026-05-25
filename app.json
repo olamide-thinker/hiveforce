@@ -7,7 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "hiveforce",
     "userInterfaceStyle": "automatic",
-    "runtimeVersion": { "policy": "appVersion" },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "updates": {
       "fallbackToCacheTimeout": 0
     },
@@ -51,7 +53,8 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

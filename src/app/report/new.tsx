@@ -29,6 +29,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+} from 'expo-audio';
 import { Image } from 'react-native';
 import { pullAll } from '@/lib/local-sync';
 
@@ -59,8 +65,10 @@ interface PendingAttachment {
   uri: string;
   name?: string | null;
   mimeType?: string | null;
-  /** 'image' | 'video' — used to pick the thumbnail style */
-  kind: 'image' | 'video';
+  /** Used to pick the thumbnail style + the backend attachment.type */
+  kind: 'image' | 'video' | 'audio';
+  /** Recording duration in seconds — only meaningful for audio. */
+  durationSec?: number;
 }
 
 export default function NewReportScreen() {
@@ -74,6 +82,74 @@ export default function NewReportScreen() {
   const [body, setBody] = useState('');
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  // Audio recorder — RECORDING_PRESETS.HIGH_QUALITY gives an mp4-
+  // wrapped AAC-LC encoding that's small enough for cellular
+  // upload (~24 KB/s) and plays back in the browser without a
+  // codec dance. The state hook re-renders this component
+  // ~100ms while recording so the timer ticks live.
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
+
+  async function toggleRecording() {
+    if (submitting) return;
+    if (recorderState.isRecording) {
+      // Stop. After stop() resolves, recorder.uri holds the local
+      // file path of the captured audio. Snapshot the duration so
+      // we can show "0:42" on the thumbnail.
+      const durationSec = Math.round((recorderState.durationMillis ?? 0) / 1000);
+      try {
+        await recorder.stop();
+      } catch (err: any) {
+        Alert.alert('Recording failed', String(err?.message ?? err));
+        return;
+      }
+      const uri = recorder.uri;
+      if (!uri) return;
+      setAttachments((prev) => [
+        ...prev,
+        {
+          uri,
+          // expo-audio's HIGH_QUALITY preset is m4a on iOS, mp4 on
+          // Android. Both decode as audio/mp4 server-side.
+          name: `voice-${Date.now()}.m4a`,
+          mimeType: 'audio/mp4',
+          kind: 'audio',
+          durationSec,
+        },
+      ]);
+    } else {
+      // Start. expo-audio's permission helper handles the OS
+      // prompt + remembering the grant.
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          'Microphone permission needed',
+          'Grant microphone access in Settings to record voice evidence.',
+        );
+        return;
+      }
+      try {
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+      } catch (err: any) {
+        Alert.alert(
+          'Recording failed',
+          String(err?.message ?? err),
+        );
+      }
+    }
+  }
+
+  /**
+   * Format seconds as "M:SS" — used on the recording timer + the
+   * audio attachment thumbnail caption.
+   */
+  function formatDuration(s: number): string {
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+  }
 
   /**
    * Open the OS media picker. The picker handles permission
@@ -156,7 +232,7 @@ export default function NewReportScreen() {
       }
       const attachmentRecords = uploaded.map((u, i) => ({
         url: u.url,
-        type: attachments[i]?.kind === 'video' ? 'video' : 'image',
+        type: attachments[i]?.kind ?? 'image', // image | video | audio
         label: u.filename,
       }));
 
@@ -302,7 +378,7 @@ export default function NewReportScreen() {
             <TouchableOpacity
               onPress={captureWithCamera}
               style={styles.attachBtn}
-              disabled={submitting}
+              disabled={submitting || recorderState.isRecording}
               activeOpacity={0.8}
             >
               <Ionicons name="camera-outline" size={18} color="#374151" />
@@ -311,11 +387,39 @@ export default function NewReportScreen() {
             <TouchableOpacity
               onPress={pickFromLibrary}
               style={styles.attachBtn}
-              disabled={submitting}
+              disabled={submitting || recorderState.isRecording}
               activeOpacity={0.8}
             >
               <Ionicons name="image-outline" size={18} color="#374151" />
               <Text style={styles.attachBtnText}>Gallery</Text>
+            </TouchableOpacity>
+            {/* Record button — turns red + shows timer while
+                recording. Tap to stop and stamp the audio file
+                into the attachments list. */}
+            <TouchableOpacity
+              onPress={toggleRecording}
+              style={[
+                styles.attachBtn,
+                recorderState.isRecording && styles.recordingActive,
+              ]}
+              disabled={submitting}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name={recorderState.isRecording ? 'stop' : 'mic-outline'}
+                size={18}
+                color={recorderState.isRecording ? '#fff' : '#374151'}
+              />
+              <Text
+                style={[
+                  styles.attachBtnText,
+                  recorderState.isRecording && { color: '#fff' },
+                ]}
+              >
+                {recorderState.isRecording
+                  ? formatDuration((recorderState.durationMillis ?? 0) / 1000)
+                  : 'Record'}
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -333,6 +437,21 @@ export default function NewReportScreen() {
                     <View style={styles.videoThumb}>
                       <Ionicons name="videocam" size={28} color="#fff" />
                     </View>
+                  ) : a.kind === 'audio' ? (
+                    // Audio: dark tile with mic + duration. No
+                    // waveform render for v1 — duration is enough
+                    // to communicate "this is the 0:42 clip".
+                    <View style={styles.audioThumb}>
+                      <Ionicons name="mic" size={28} color="#fff" />
+                      {typeof a.durationSec === 'number' && (
+                        <Text style={styles.audioDur}>
+                          {Math.floor(a.durationSec / 60)}:
+                          {(a.durationSec % 60)
+                            .toString()
+                            .padStart(2, '0')}
+                        </Text>
+                      )}
+                    </View>
                   ) : (
                     <Image source={{ uri: a.uri }} style={styles.thumb} />
                   )}
@@ -347,6 +466,11 @@ export default function NewReportScreen() {
                   {a.kind === 'video' && (
                     <View style={styles.videoBadge}>
                       <Text style={styles.videoBadgeText}>VIDEO</Text>
+                    </View>
+                  )}
+                  {a.kind === 'audio' && (
+                    <View style={styles.videoBadge}>
+                      <Text style={styles.videoBadgeText}>AUDIO</Text>
                     </View>
                   )}
                 </View>
@@ -449,6 +573,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // Audio thumb — red-tinted so it visually pops next to the
+  // monochrome video tile. Duration sits centered under the mic
+  // icon so the supervisor can see at a glance how long the
+  // clip is before tapping play.
+  audioThumb: {
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+    backgroundColor: '#7c2d12',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  audioDur: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  // Active recording state — red background + white icon to make
+  // the timer obvious. Disabled state on Camera/Gallery during
+  // recording keeps the user from triggering multiple captures
+  // simultaneously.
+  recordingActive: { backgroundColor: '#dc2626' },
   thumbRemove: {
     position: 'absolute',
     top: 4,
