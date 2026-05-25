@@ -27,7 +27,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { desc, eq } from 'drizzle-orm';
-import { manualSync } from '@syncsalez-dev/sync-rn';
+import { pullAll } from '@/lib/local-sync';
 
 import { useTenant } from '@/lib/tenant-store';
 import { db } from '@/db';
@@ -127,7 +127,7 @@ export default function ReportsScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await manualSync({ entities: ['field_reports', 'daily_logs'] });
+      await pullAll(['field_reports', 'daily_logs']);
     } catch {}
     await load();
     setRefreshing(false);

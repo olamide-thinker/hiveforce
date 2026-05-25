@@ -26,7 +26,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { desc, eq } from 'drizzle-orm';
-import { manualSync } from '@syncsalez-dev/sync-rn';
+import { pullAll } from '@/lib/local-sync';
 
 import { useAuth } from '@/lib/auth-context';
 import { useTenant } from '@/lib/tenant-store';
@@ -108,7 +108,7 @@ export default function EarningsScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await manualSync({ entities: ['worker_earnings'] });
+      await pullAll(['worker_earnings']);
     } catch {}
     await load();
     setRefreshing(false);

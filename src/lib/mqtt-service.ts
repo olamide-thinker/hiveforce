@@ -25,12 +25,10 @@
  * staging / prod can swap without a rebuild.
  */
 import mqtt, { type MqttClient } from 'mqtt';
-import {
-  MqttConnectionStatus,
-  manualSync,
-} from '@syncsalez-dev/sync-rn';
+import { MqttConnectionStatus } from '@syncsalez-dev/sync-rn';
 
 import type { Tenant } from './tenant-store';
+import { pullAll } from './local-sync';
 
 type StatusValue =
   | MqttConnectionStatus.Connected
@@ -150,10 +148,11 @@ class MqttRealtimeService {
         // Bad JSON — still fire a sync since something changed.
       }
 
-      // Fire-and-forget. manualSync de-duplicates if multiple
-      // events fire back-to-back.
-      manualSync({ entities: [entity] }).catch((err) => {
-        console.warn('[mqtt] manualSync after event failed:', err);
+      // Fire-and-forget. Multiple events in quick succession just
+      // re-pull; the local cursor de-duplicates rows that haven't
+      // changed since the last pull.
+      pullAll([entity]).catch((err) => {
+        console.warn('[mqtt] pull after event failed:', err);
       });
     });
   }

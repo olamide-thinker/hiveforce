@@ -31,7 +31,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { eq, asc } from 'drizzle-orm';
-import { manualSync } from '@syncsalez-dev/sync-rn';
+import { pullAll } from '@/lib/local-sync';
 
 import { useAuth } from '@/lib/auth-context';
 import { apiPost } from '@/lib/api';
@@ -146,7 +146,7 @@ export default function TaskDetailScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await manualSync({ entities: ['tasks', 'task_items', 'worker_earnings'] });
+      await pullAll(['tasks', 'task_items', 'worker_earnings']);
     } catch {}
     await load();
     setRefreshing(false);
@@ -161,7 +161,7 @@ export default function TaskDetailScreen() {
         // Backend auto-publishes an MQTT event; the next pull
         // updates local SQLite. Force one immediately for snappy
         // UX rather than waiting for the periodic timer.
-        await manualSync({ entities: ['task_items', 'worker_earnings'] });
+        await pullAll(['task_items', 'worker_earnings']);
         await load();
       } catch (err: any) {
         Alert.alert(

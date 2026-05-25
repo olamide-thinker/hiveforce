@@ -43,15 +43,12 @@ import {
 import { installBridgeConfig } from './sync-bridge';
 
 import {
-  initSyncCore,
   initSyncRealtime,
-  resetSyncInitialized,
-  startPeriodicSync,
-  stopPeriodicSync,
 } from '@syncsalez-dev/sync-rn';
 
 import { useAuth } from './auth-context';
 import { apiGet } from './api';
+import { pullAll } from './local-sync';
 import {
   setUser,
   setOrganization,
@@ -95,6 +92,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   // sync-core. The ref tracks whose uid we've initialized for; if
   // the user changes, we tear down and re-init.
   const initializedForUid = useRef<string | null>(null);
+  // Periodic pull timer — cleared on sign-out / unmount.
+  const periodicTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (initializing) return;
@@ -102,7 +101,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     // Sign-out path — clean up whatever's currently initialized.
     if (!user) {
       if (initializedForUid.current) {
-        void teardown();
+        void teardown(periodicTimerRef.current);
+        periodicTimerRef.current = null;
         initializedForUid.current = null;
         setState({ status: 'idle' });
       }
@@ -121,7 +121,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       try {
         setState({ status: 'initializing' });
         if (previous) {
-          await teardown();
+          await teardown(periodicTimerRef.current);
+          periodicTimerRef.current = null;
         }
 
         // 1. Local SQLite schema — idempotent.
@@ -155,20 +156,30 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         //    when it sees a non-empty context on first call.
         installBridgeConfig();
 
-        // 6. Bootstrap the sync core. This wires up the
-        //    orchestrator, registers periodic sync, and starts
-        //    listening for app-state changes (background → sync
-        //    on resume).
-        await initSyncCore(user.uid);
-
-        // 7. Realtime subscription. Tenant has the projectId (=
-        //    branchId) at this point — if it's null, mqtt-service
-        //    no-ops and only the pull-cursor path runs. Fire and
-        //    forget; sync-rn handles reconnects internally.
+        // 6. Realtime subscription via sync-rn's MQTT. Tenant has
+        //    the projectId at this point — if it's null, mqtt-
+        //    service no-ops and only the pull-cursor path runs.
+        //    Fire and forget; sync-rn handles reconnects internally.
         void initSyncRealtime({ tenant: getTenantContext() });
 
-        // 8. Start the background pull/push loop.
-        startPeriodicSync();
+        // 7. Kick off an immediate pull so the home screen has
+        //    data when the user lands on it. Don't await — UI can
+        //    show the empty state briefly while the pull runs.
+        void pullAll().catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn('[sync] initial pullAll failed', err);
+        });
+
+        // 8. Periodic pull every 30s while the app is foregrounded.
+        //    MQTT events also trigger ad-hoc pulls (see mqtt-service
+        //    .ts → onMessage). The periodic loop is the safety net
+        //    when MQTT is disconnected or events get dropped.
+        if (periodicTimerRef.current) {
+          clearInterval(periodicTimerRef.current);
+        }
+        periodicTimerRef.current = setInterval(() => {
+          void pullAll().catch(() => {});
+        }, 30_000);
 
         setState({ status: 'ready', projectId });
       } catch (err: any) {
@@ -192,13 +203,19 @@ export function useSync(): SyncContextValue {
   return useContext(SyncContext);
 }
 
-async function teardown(): Promise<void> {
-  try {
-    stopPeriodicSync();
-  } catch {}
-  try {
-    resetSyncInitialized();
-  } catch {}
+/**
+ * Sign-out cleanup. Stops the periodic pull, wipes the local DB so
+ * the next user doesn't see the previous user's rows, and clears
+ * tenant state. The periodic timer reference lives in the component
+ * — we accept it as an argument here so teardown stays a pure
+ * function we can call from the useEffect.
+ */
+async function teardown(
+  periodicTimer: ReturnType<typeof setInterval> | null,
+): Promise<void> {
+  if (periodicTimer) {
+    clearInterval(periodicTimer);
+  }
   try {
     await clearAllData();
   } catch {}

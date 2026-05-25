@@ -24,7 +24,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { desc, eq } from 'drizzle-orm';
-import { manualSync } from '@syncsalez-dev/sync-rn';
+import { pullAll } from '@/lib/local-sync';
 
 import { useAuth } from '@/lib/auth-context';
 import { useSync } from '@/lib/sync-context';
@@ -91,7 +91,7 @@ export default function HomeScreen() {
     setRefreshing(true);
     setLastSyncError(null);
     try {
-      await manualSync({});
+      await pullAll();
       await loadLocal();
     } catch (err: any) {
       setLastSyncError(String(err?.message ?? err));

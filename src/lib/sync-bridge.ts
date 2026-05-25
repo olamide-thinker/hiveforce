@@ -35,6 +35,7 @@ import { signOut } from 'firebase/auth';
 import {
   setBridgeConfig,
   apiClient,
+  syncConfigProvider,
   type BridgeConfiguration,
 } from '@syncsalez-dev/sync-rn';
 
@@ -161,6 +162,29 @@ const bridgeConfig: BridgeConfiguration = {
 // at the top level guarantees that by the time NetInfo's first
 // async tick fires, the config is in place.
 setBridgeConfig(bridgeConfig);
+
+// ─── Override sync-rn's syncConfigProvider ─────────────────────────
+// sync-rn ships with a hardcoded entity list from the original
+// syncsalez vendor / POS app: organizations, branches, staff, stocks,
+// price_rules, permissions, etc. Those entities don't exist on the
+// shan-doc-printer backend, so every auto-pull lands a 404 cascade.
+//
+// More importantly, our entity endpoints REQUIRE a `projectId` query
+// parameter that sync-core's incremental manager has no idea how to
+// supply (its endpoint templates are static strings, no tenant
+// substitution). So we'd lose either way.
+//
+// Solution: empty the enabled-entity list. This silences sync-core's
+// automatic background sync entirely. We then run our own pull
+// function from lib/local-sync.ts that knows the URL shape, the
+// projectId requirement, and how to land rows in our local SQLite.
+//
+// sync-rn's infrastructure (auth, MQTT, NetInfo, bridge logging)
+// keeps working — we just don't drive the entity loop from it.
+syncConfigProvider.getEnabledEntities = () => [];
+syncConfigProvider.getEntitiesByPriority = () => [];
+syncConfigProvider.getAllEntityConfigs = () => ({});
+syncConfigProvider.getEntityConfig = () => undefined;
 
 /**
  * Backward-compatible explicit installer. Called from SyncProvider

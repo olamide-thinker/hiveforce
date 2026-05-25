@@ -28,7 +28,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { manualSync } from '@syncsalez-dev/sync-rn';
+import { pullAll } from '@/lib/local-sync';
 
 import { apiPost } from '@/lib/api';
 import { useTenant } from '@/lib/tenant-store';
@@ -87,9 +87,8 @@ export default function NewReportScreen() {
       // Force the entity to land in local SQLite before the user
       // sees the list — feels instant rather than "wait 30s for
       // the next periodic tick".
-      void manualSync({
-        entities: kind === 'daily_log' ? ['daily_logs'] : ['field_reports'],
-      }).catch(() => {});
+      void pullAll([kind === 'daily_log' ? 'daily_logs' : 'field_reports'])
+        .catch(() => {});
       router.back();
     } catch (err: any) {
       Alert.alert(

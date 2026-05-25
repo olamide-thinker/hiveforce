@@ -25,7 +25,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { apiGet } from '@/lib/api';
 import { setProject, getTenantContext } from '@/lib/tenant-store';
-import { manualSync } from '@syncsalez-dev/sync-rn';
+import { pullAll } from '@/lib/local-sync';
 
 interface Project {
   id: string;
@@ -71,7 +71,7 @@ export default function ProjectsScreen() {
     // Kick a fresh pull immediately so the home list isn't empty
     // when we navigate back. Fire-and-forget — the periodic sync
     // would catch up anyway.
-    void manualSync({}).catch(() => {});
+    void pullAll().catch(() => {});
     router.replace('/');
   }, []);
 
