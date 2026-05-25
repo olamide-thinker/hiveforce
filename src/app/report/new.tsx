@@ -28,10 +28,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { Image } from 'react-native';
 import { pullAll } from '@/lib/local-sync';
 
 import { apiPost } from '@/lib/api';
 import { useTenant } from '@/lib/tenant-store';
+import { uploadFile, type UploadResult } from '@/lib/upload';
 
 type ReportKind =
   | 'note'
@@ -52,6 +55,14 @@ const KIND_OPTIONS: { kind: ReportKind; label: string; icon: any }[] = [
   { kind: 'daily_log', label: 'Daily log', icon: 'calendar-outline' },
 ];
 
+interface PendingAttachment {
+  uri: string;
+  name?: string | null;
+  mimeType?: string | null;
+  /** 'image' | 'video' — used to pick the thumbnail style */
+  kind: 'image' | 'video';
+}
+
 export default function NewReportScreen() {
   const tenant = useTenant();
   // Optional taskId from the route query — set when this screen is
@@ -61,7 +72,66 @@ export default function NewReportScreen() {
   const [kind, setKind] = useState<ReportKind>('note');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  /**
+   * Open the OS media picker. The picker handles permission
+   * prompts internally. `mediaTypes: ['images', 'videos']` lets the
+   * worker grab either kind in one tap; multi-select lets them
+   * attach several photos at once for thorough evidence.
+   */
+  async function pickFromLibrary() {
+    if (submitting) return;
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      allowsMultipleSelection: true,
+      quality: 0.8, // 0.8 keeps file size manageable on cellular data
+    });
+    if (res.canceled) return;
+    const additions: PendingAttachment[] = res.assets.map((a) => ({
+      uri: a.uri,
+      name: a.fileName,
+      mimeType: a.mimeType,
+      kind: a.type === 'video' ? 'video' : 'image',
+    }));
+    setAttachments((prev) => [...prev, ...additions]);
+  }
+
+  /**
+   * Live camera capture. Same shape as library pick. Permission
+   * is asked on first call; subsequent calls reuse the grant.
+   */
+  async function captureWithCamera() {
+    if (submitting) return;
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert(
+        'Camera permission needed',
+        'Grant camera access in Settings to capture evidence.',
+      );
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images', 'videos'],
+      quality: 0.8,
+    });
+    if (res.canceled) return;
+    const a = res.assets[0];
+    setAttachments((prev) => [
+      ...prev,
+      {
+        uri: a.uri,
+        name: a.fileName,
+        mimeType: a.mimeType,
+        kind: a.type === 'video' ? 'video' : 'image',
+      },
+    ]);
+  }
+
+  function removeAttachment(idx: number) {
+    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  }
 
   const canSubmit = body.trim().length > 0 && !!tenant.branchId && !submitting;
 
@@ -69,6 +139,27 @@ export default function NewReportScreen() {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
+      // Upload attachments first so we have URLs to stamp into the
+      // report. Sequential rather than parallel so a slow phone
+      // (or 3G connection) doesn't fan out 5 simultaneous uploads
+      // and OOM the OS. If one fails we abort the whole submit so
+      // the worker can retry; partial-attachment reports are
+      // confusing in the audit log.
+      const uploaded: UploadResult[] = [];
+      for (const a of attachments) {
+        const r = await uploadFile({
+          uri: a.uri,
+          name: a.name ?? null,
+          mimeType: a.mimeType ?? null,
+        });
+        uploaded.push(r);
+      }
+      const attachmentRecords = uploaded.map((u, i) => ({
+        url: u.url,
+        type: attachments[i]?.kind === 'video' ? 'video' : 'image',
+        label: u.filename,
+      }));
+
       if (kind === 'daily_log') {
         // Daily log uses today's date. The unique (projectId,
         // logDate) backend constraint means a second log for the
@@ -79,6 +170,8 @@ export default function NewReportScreen() {
           logDate: today,
           workPerformed: body.trim(),
           notes: title.trim() || undefined,
+          attachments:
+            attachmentRecords.length > 0 ? attachmentRecords : undefined,
         });
       } else {
         await apiPost('/api/field-reports', {
@@ -91,6 +184,8 @@ export default function NewReportScreen() {
           // up in that task's Reports section after sync. Otherwise
           // the report stays project-scoped.
           taskId: taskId || undefined,
+          attachments:
+            attachmentRecords.length > 0 ? attachmentRecords : undefined,
         });
       }
       // Force the entity to land in local SQLite before the user
@@ -198,6 +293,67 @@ export default function NewReportScreen() {
             autoFocus
           />
 
+          {/* ─── Attachments ─── */}
+          {/* Two-button row to give parity between "pick existing"
+              and "capture now" — workers documenting an incident
+              usually want the camera right now; daily-log evidence
+              is often already in their gallery. */}
+          <View style={styles.attachRow}>
+            <TouchableOpacity
+              onPress={captureWithCamera}
+              style={styles.attachBtn}
+              disabled={submitting}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="camera-outline" size={18} color="#374151" />
+              <Text style={styles.attachBtnText}>Camera</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={pickFromLibrary}
+              style={styles.attachBtn}
+              disabled={submitting}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="image-outline" size={18} color="#374151" />
+              <Text style={styles.attachBtnText}>Gallery</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Thumbnail strip — horizontal scrollable list of selected
+              attachments. Tap the × to remove before submit. */}
+          {attachments.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.thumbStrip}
+            >
+              {attachments.map((a, i) => (
+                <View key={`${a.uri}-${i}`} style={styles.thumbWrap}>
+                  {a.kind === 'video' ? (
+                    <View style={styles.videoThumb}>
+                      <Ionicons name="videocam" size={28} color="#fff" />
+                    </View>
+                  ) : (
+                    <Image source={{ uri: a.uri }} style={styles.thumb} />
+                  )}
+                  <Pressable
+                    onPress={() => removeAttachment(i)}
+                    style={styles.thumbRemove}
+                    hitSlop={6}
+                    disabled={submitting}
+                  >
+                    <Ionicons name="close" size={14} color="#fff" />
+                  </Pressable>
+                  {a.kind === 'video' && (
+                    <View style={styles.videoBadge}>
+                      <Text style={styles.videoBadgeText}>VIDEO</Text>
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          )}
+
           {!tenant.branchId && (
             <View style={styles.warnBanner}>
               <Ionicons name="alert-circle" size={16} color="#92400e" />
@@ -257,6 +413,63 @@ const styles = StyleSheet.create({
     minHeight: 160,
     textAlignVertical: 'top',
   },
+  // ─── Attachment picker styles ──────────────────────────────────
+  // Twin pill buttons for camera + gallery. Equal flex so the row
+  // feels symmetric whatever the icon labels render at.
+  attachRow: { flexDirection: 'row', gap: 8 },
+  attachBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 10,
+  },
+  attachBtnText: { fontSize: 14, color: '#374151', fontWeight: '600' },
+  // Horizontal thumbnail strip — square 80x80 tiles with a remove
+  // ×, plus a "VIDEO" badge corner so the worker can tell at a
+  // glance which clip is what.
+  thumbStrip: { gap: 8, paddingVertical: 6 },
+  thumbWrap: {
+    position: 'relative',
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#e5e7eb',
+  },
+  thumb: { width: 80, height: 80, borderRadius: 10 },
+  videoThumb: {
+    width: 80,
+    height: 80,
+    borderRadius: 10,
+    backgroundColor: '#374151',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  thumbRemove: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoBadge: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  videoBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
   warnBanner: {
     flexDirection: 'row',
     alignItems: 'center',

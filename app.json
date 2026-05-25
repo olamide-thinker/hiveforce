@@ -34,6 +34,14 @@
     "plugins": [
       "expo-router",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Shan Field needs access to your photos so you can attach evidence to reports.",
+          "cameraPermission": "Shan Field needs the camera so you can take photos / videos of your work as evidence on reports.",
+          "microphonePermission": "Shan Field uses the microphone when recording video evidence on reports."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
